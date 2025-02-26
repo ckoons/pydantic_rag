@@ -1,0 +1,55 @@
+# Session Memory: Pydantic RAG Project
+
+## Session Date: February 25, 2025
+
+## Project Summary
+We built a simplified RAG (Retrieval-Augmented Generation) system for Pydantic AI documentation with these key features:
+- Web crawler with configurable depth and timeout settings
+- Vector embeddings using OpenAI's API
+- SQLite database for storage
+- Streamlit-based UI with tabs for crawling and querying
+
+## Current State
+- Repository path: /Users/cskoons/projects/work/pydantic_rag
+- Main code file: combined_crawler_ui.py
+- The system is fully functional but could use enhancements (see Future Enhancements)
+- Database file created: pydantic_docs_simple.db
+- Git repository initialized with initial commit
+
+## Technical Details
+- Using OpenAI embeddings API for semantic search
+- BeautifulSoup for HTML parsing
+- Streamlit for the UI
+- SQLite for lightweight storage
+- Recursive crawling implementation with depth control
+- Cosine similarity for vector search
+
+## Code Approach
+- We created a combined script rather than separate modules for simplicity
+- We built a system to extract and store text from web pages
+- We implemented vector search using embeddings
+- We used async functions for better performance
+- We created a tabbed UI for different functions
+
+## Future Enhancements
+1. Add filtering options to control which links are followed during crawling
+2. Implement user authentication for the Streamlit interface 
+3. Add support for PDF and other document formats
+4. Integrate with Pydantic models for structured data extraction
+5. Add tests for the crawler and RAG components
+6. Implement caching to reduce API calls
+7. Create a Docker container for easy deployment
+8. Add support for other embedding models (e.g., local models)
+
+## What We Accomplished
+- Created a functional RAG system from scratch
+- Set up a clean project structure
+- Initialized git version control
+- Made the crawler capable of recursive crawling
+- Implemented vector search for semantic querying
+- Created a clean, functional UI with Streamlit
+
+## Last Actions
+- Added session documentation files
+- Committed all changes to git
+- Prepared instructions for pushing to GitHub
