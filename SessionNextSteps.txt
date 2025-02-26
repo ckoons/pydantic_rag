@@ -1,0 +1,71 @@
+# Pydantic RAG - Next Steps
+
+## Project Overview
+You've created a simplified RAG (Retrieval-Augmented Generation) system for Pydantic documentation. The application has:
+
+1. A web crawler that can fetch and store documentation
+2. A chat interface that uses vector search to answer questions
+3. A simple SQLite database for storing documents and embeddings
+
+## How to Run the Application
+1. Set up your environment:
+   ```bash
+   cd /Users/cskoons/projects/work/pydantic_rag
+   
+   # Create and activate a virtual environment (optional but recommended)
+   python -m venv venv
+   source venv/bin/activate
+   
+   # Install dependencies
+   pip install -r requirements.txt
+   
+   # Set up your .env file
+   cp .env.example .env
+   # Edit .env to add your OpenAI API key
+   ```
+
+2. Run the application:
+   ```bash
+   streamlit run combined_crawler_ui.py
+   ```
+
+3. Using the application:
+   - Go to the "Crawler" tab to add documents to your knowledge base
+   - Enter URLs to crawl (e.g., https://ai.pydantic.dev/)
+   - Adjust depth and timeout settings as needed
+   - Use the "Chat" tab to ask questions about the crawled content
+
+## Push to GitHub
+The project is ready to be pushed to GitHub. Here's how:
+
+1. Go to GitHub in your browser (https://github.com)
+2. Create a new repository named `pydantic_rag`
+3. Make it public or private as you prefer
+4. Don't initialize it with a README, .gitignore, or license (we already have those)
+5. After creating it, run these commands:
+   ```bash
+   cd /Users/cskoons/projects/work/pydantic_rag
+   git remote add origin https://github.com/YOUR-USERNAME/pydantic_rag.git
+   git push -u origin main
+   ```
+   (Replace YOUR-USERNAME with your GitHub username)
+
+## Future Enhancements
+Consider these improvements for your RAG system:
+
+1. Add filtering options to control which links are followed during crawling
+2. Implement user authentication for the Streamlit interface 
+3. Add support for PDF and other document formats
+4. Integrate with Pydantic models for structured data extraction
+5. Add tests for the crawler and RAG components
+6. Implement caching to reduce API calls and improve performance
+7. Create a Docker container for easy deployment
+8. Add support for other embedding models (e.g., local models via LlamaIndex)
+
+## Files in This Project
+- combined_crawler_ui.py - Main application with both crawling and chat interfaces
+- README.md - Documentation on setup and usage
+- requirements.txt - Dependencies needed to run the application
+- .env.example - Template for environment variables
+- .gitignore - Configured to exclude database and environment files
+- pydantic_docs_simple.db - SQLite database (excluded from git)
