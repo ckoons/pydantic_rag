@@ -191,7 +191,7 @@ async def process_url(
             progress_bar.progress(0.8, text="Storing in database")
         
         # Store in database
-        store_document(url, title, content, embedding)
+        doc_id = await store_document(url, title, content, embedding)
         
         success_msg = f"Stored {url} in database"
         

@@ -4,12 +4,17 @@ Handles user interaction and display components.
 """
 
 import streamlit as st
-from typing import List, Dict
+import os
+import tempfile
+from typing import List, Dict, Optional, BinaryIO, Any
 
 from db import get_all_documents, reset_database
 from crawler import process_url
 from search import search_similar, prepare_context
-from embeddings import get_answer
+from embeddings import get_embedding, get_answer
+from documents import process_document_with_chunking, detect_file_type, DocumentProcessingError
+from caching import cache_stats
+from vector_store import vector_store
 
 def show_crawled_docs() -> List[Dict[str, str]]:
     """Display all crawled documents in the database"""
@@ -21,57 +26,186 @@ def show_crawled_docs() -> List[Dict[str, str]]:
     
     return docs
 
+async def process_document_upload(uploaded_file) -> str:
+    """
+    Process an uploaded document file
+    
+    Args:
+        uploaded_file: Streamlit UploadedFile object
+        
+    Returns:
+        Result message
+    """
+    try:
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{uploaded_file.name}") as tmp_file:
+            # Write uploaded content to temp file
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_path = tmp_file.name
+        
+        try:
+            # Detect file type
+            doc_type = detect_file_type(tmp_path)
+            
+            if doc_type == 'unknown':
+                return f"Error: Unsupported file type for {uploaded_file.name}"
+            
+            # Process document with chunking
+            chunks = process_document_with_chunking(
+                tmp_path, 
+                document_type=doc_type,
+                chunk_size=1000, 
+                chunk_overlap=200
+            )
+            
+            if not chunks:
+                return f"Error: Could not extract any content from {uploaded_file.name}"
+            
+            # Get embeddings and store chunks
+            success_count = 0
+            error_count = 0
+            
+            for i, chunk in enumerate(chunks):
+                # Generate a unique URL-like identifier for each chunk
+                chunk_id = f"file://{uploaded_file.name}#chunk{i+1}"
+                chunk_title = f"{uploaded_file.name} (Chunk {i+1}/{len(chunks)})"
+                
+                # Get embedding
+                embedding = await get_embedding(chunk)
+                
+                if embedding:
+                    # Store in database
+                    from db import store_document
+                    doc_id = await store_document(chunk_id, chunk_title, chunk, embedding)
+                    if doc_id:
+                        success_count += 1
+                    else:
+                        error_count += 1
+                else:
+                    error_count += 1
+            
+            # Remove temp file
+            os.unlink(tmp_path)
+            
+            if success_count > 0:
+                return f"Successfully processed {uploaded_file.name} - {success_count} chunks stored, {error_count} errors"
+            else:
+                return f"Failed to process {uploaded_file.name} - no chunks were stored"
+                
+        except DocumentProcessingError as e:
+            os.unlink(tmp_path)
+            return f"Error processing document: {str(e)}"
+        except Exception as e:
+            os.unlink(tmp_path)
+            return f"Unexpected error: {str(e)}"
+            
+    except Exception as e:
+        return f"Error handling upload: {str(e)}"
+
 async def show_crawler_ui():
     """Display the crawler UI tab"""
     st.header("Web Crawler")
-    st.write("Enter a URL to crawl for documentation")
     
-    # Initialize session state for form values
-    if "crawl_depth" not in st.session_state:
-        st.session_state.crawl_depth = 1
-    if "crawl_timeout" not in st.session_state:
-        st.session_state.crawl_timeout = 30
+    # Create tabs for different crawling methods
+    crawl_tabs = st.tabs(["Web Crawler", "Document Upload", "Stats"])
+    
+    # Web crawler tab
+    with crawl_tabs[0]:
+        st.write("Enter a URL to crawl for documentation")
         
-    url_input = st.text_input("URL to crawl")
+        # Initialize session state for form values
+        if "crawl_depth" not in st.session_state:
+            st.session_state.crawl_depth = 1
+        if "crawl_timeout" not in st.session_state:
+            st.session_state.crawl_timeout = 30
+            
+        url_input = st.text_input("URL to crawl")
+        
+        # Add crawling options
+        col1, col2 = st.columns(2)
+        with col1:
+            depth = st.slider("Crawl Depth", 1, 10, st.session_state.crawl_depth, 
+                             help="How many links deep to follow from the starting URL",
+                             key="depth_slider")
+            # Update session state when slider changes
+            st.session_state.crawl_depth = depth
+        with col2:
+            timeout = st.slider("Timeout (seconds)", 10, 120, st.session_state.crawl_timeout, 
+                               help="Maximum time to wait for a page to load",
+                               key="timeout_slider")
+            # Update session state when slider changes
+            st.session_state.crawl_timeout = timeout
+            
+        # URL filtering options
+        st.subheader("URL Filtering")
+        st.write("Optionally filter which URLs are crawled using regex patterns")
     
-    # Add crawling options
-    col1, col2 = st.columns(2)
-    with col1:
-        depth = st.slider("Crawl Depth", 1, 10, st.session_state.crawl_depth, 
-                         help="How many links deep to follow from the starting URL",
-                         key="depth_slider")
-        # Update session state when slider changes
-        st.session_state.crawl_depth = depth
-    with col2:
-        timeout = st.slider("Timeout (seconds)", 10, 120, st.session_state.crawl_timeout, 
-                           help="Maximum time to wait for a page to load",
-                           key="timeout_slider")
-        # Update session state when slider changes
-        st.session_state.crawl_timeout = timeout
+        # Initialize session state for patterns
+        if "include_patterns" not in st.session_state:
+            st.session_state.include_patterns = ""
+        if "exclude_patterns" not in st.session_state:
+            st.session_state.exclude_patterns = ""
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            include_patterns = st.text_area("Include patterns (one per line)", 
+                                            value=st.session_state.include_patterns,
+                                            help="Only crawl URLs that match at least one of these regex patterns",
+                                            key="include_patterns_input")
+            st.session_state.include_patterns = include_patterns
+        with col2:
+            exclude_patterns = st.text_area("Exclude patterns (one per line)", 
+                                            value=st.session_state.exclude_patterns,
+                                            help="Skip URLs that match any of these regex patterns",
+                                            key="exclude_patterns_input")
+            st.session_state.exclude_patterns = exclude_patterns
     
-    # URL filtering options
-    st.subheader("URL Filtering")
-    st.write("Optionally filter which URLs are crawled using regex patterns")
+    # Document upload tab
+    with crawl_tabs[1]:
+        st.write("Upload PDF, DOCX, or text files to extract information")
+        
+        # File uploader
+        uploaded_files = st.file_uploader(
+            "Upload documents", 
+            type=["pdf", "docx", "txt", "md", "html", "htm"],
+            accept_multiple_files=True
+        )
+        
+        # Process button
+        if uploaded_files and st.button("Process Documents"):
+            for uploaded_file in uploaded_files:
+                with st.status(f"Processing {uploaded_file.name}...") as status:
+                    result = await process_document_upload(uploaded_file)
+                    if "Error" in result:
+                        status.update(label=result, state="error")
+                    else:
+                        status.update(label=result, state="complete")
     
-    # Initialize session state for patterns
-    if "include_patterns" not in st.session_state:
-        st.session_state.include_patterns = ""
-    if "exclude_patterns" not in st.session_state:
-        st.session_state.exclude_patterns = ""
+    # Stats tab
+    with crawl_tabs[2]:
+        st.write("System statistics")
+        
+        if st.button("Refresh Stats"):
+            # Vector store stats
+            vector_stats = vector_store.get_stats()
+            st.subheader("Vector Database")
+            st.write(f"Number of documents: {vector_stats['num_documents']}")
+            st.write(f"Number of vectors: {vector_stats['num_vectors']}")
+            st.write(f"Vector dimension: {vector_stats['dimension']}")
+            
+            # Cache stats
+            cache_information = cache_stats()
+            st.subheader("Cache")
+            
+            embedding_cache = cache_information["embedding_cache"]
+            st.write(f"Embedding cache: {embedding_cache['size']} items, {embedding_cache['disk_size_bytes'] / (1024*1024):.2f} MB")
+            
+            document_cache = cache_information["document_cache"]
+            st.write(f"Document cache: {document_cache['size']} items, {document_cache['disk_size_bytes'] / (1024*1024):.2f} MB")
+            
+            query_cache = cache_information["query_cache"]
+            st.write(f"Query cache: {query_cache['size']} items, {query_cache['disk_size_bytes'] / (1024*1024):.2f} MB")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        include_patterns = st.text_area("Include patterns (one per line)", 
-                                        value=st.session_state.include_patterns,
-                                        help="Only crawl URLs that match at least one of these regex patterns",
-                                        key="include_patterns_input")
-        st.session_state.include_patterns = include_patterns
-    with col2:
-        exclude_patterns = st.text_area("Exclude patterns (one per line)", 
-                                        value=st.session_state.exclude_patterns,
-                                        help="Skip URLs that match any of these regex patterns",
-                                        key="exclude_patterns_input")
-        st.session_state.exclude_patterns = exclude_patterns
     
     # Set up columns for buttons
     col1, col2 = st.columns(2)

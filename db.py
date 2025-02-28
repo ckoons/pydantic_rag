@@ -40,14 +40,24 @@ def reset_database() -> str:
     """Reset the database by dropping and recreating the tables"""
     return setup_database(reset=True)
 
-def store_document(
+async def store_document(
     url: str, 
     title: str, 
     content: str, 
     embedding: List[float]
-) -> None:
-    """Store a document in the database with its embedding. 
-    Updates existing documents with the same URL."""
+) -> Optional[int]:
+    """
+    Store a document in the database with its embedding.
+    Updates existing documents with the same URL.
+    Also syncs with vector database for faster search.
+    
+    Returns:
+        Document ID if successful, None if failed
+    """
+    if not embedding:
+        print(f"Warning: Not storing document with no embedding: {url}")
+        return None
+        
     # Convert embedding to bytes for storage
     embedding_bytes = np.array(embedding, dtype=np.float32).tobytes()
     
@@ -55,25 +65,43 @@ def store_document(
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Check if this URL already exists
-    cursor.execute("SELECT id FROM docs WHERE url = ?", (url,))
-    existing_doc = cursor.fetchone()
-    
-    if existing_doc:
-        # Update existing document
-        cursor.execute(
-            "UPDATE docs SET title = ?, content = ?, embedding = ? WHERE url = ?",
-            (title, content, embedding_bytes, url)
-        )
-    else:
-        # Insert new document
-        cursor.execute(
-            "INSERT INTO docs (url, title, content, embedding) VALUES (?, ?, ?, ?)",
-            (url, title, content, embedding_bytes)
-        )
-    
-    conn.commit()
-    conn.close()
+    try:
+        # Check if this URL already exists
+        cursor.execute("SELECT id FROM docs WHERE url = ?", (url,))
+        existing_doc = cursor.fetchone()
+        
+        doc_id = None
+        
+        if existing_doc:
+            # Update existing document
+            doc_id = existing_doc[0]
+            cursor.execute(
+                "UPDATE docs SET title = ?, content = ?, embedding = ? WHERE url = ?",
+                (title, content, embedding_bytes, url)
+            )
+        else:
+            # Insert new document
+            cursor.execute(
+                "INSERT INTO docs (url, title, content, embedding) VALUES (?, ?, ?, ?)",
+                (url, title, content, embedding_bytes)
+            )
+            doc_id = cursor.lastrowid
+        
+        conn.commit()
+        
+        # Sync with vector database (only import if needed to avoid circular imports)
+        if doc_id:
+            from search import ensure_document_in_vectordb
+            await ensure_document_in_vectordb(doc_id, url, title, content, embedding)
+            
+        return doc_id
+        
+    except Exception as e:
+        conn.rollback()
+        print(f"Error storing document: {e}")
+        return None
+    finally:
+        conn.close()
 
 def get_all_documents() -> List[Dict[str, str]]:
     """Retrieve all documents from the database"""

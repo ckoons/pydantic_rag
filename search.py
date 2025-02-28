@@ -4,13 +4,19 @@ Handles vector similarity search and context preparation.
 """
 
 import numpy as np
-from typing import List, Tuple, Dict, Any
+import uuid
+from typing import List, Tuple, Dict, Any, Optional
 
 from embeddings import get_embedding, calculate_similarity
 from db import get_documents_with_embeddings
+from vector_store import vector_store
+from caching import get_cached_query_result, cache_query_result
 
-async def search_similar(query: str, top_k: int = 3) -> List[Tuple]:
-    """Search for similar documents using vector similarity"""
+# Flag to determine if we should use vector DB or SQLite search
+USE_VECTOR_DB = True
+
+async def search_similar_sqlite(query: str, top_k: int = 3) -> List[Tuple]:
+    """Search for similar documents using SQLite and in-memory similarity calculation"""
     # Get query embedding
     query_embedding = await get_embedding(query)
     if not query_embedding:
@@ -43,6 +49,71 @@ async def search_similar(query: str, top_k: int = 3) -> List[Tuple]:
     
     # Return top k results
     return similarities[:top_k]
+
+async def search_similar_vectordb(query: str, top_k: int = 3) -> List[Tuple]:
+    """Search for similar documents using FAISS vector database"""
+    # Get query embedding
+    query_embedding = await get_embedding(query)
+    if not query_embedding:
+        return []
+    
+    # Search in vector store
+    results = vector_store.search(query_embedding, top_k=top_k)
+    if not results:
+        return []
+    
+    # Convert to the format expected by the application
+    similarities = []
+    for item in results:
+        doc_id = item['id']
+        metadata = item['metadata']
+        score = item['score']
+        
+        # Extract document details from metadata
+        url = metadata.get('url', '')
+        title = metadata.get('title', '')
+        content = metadata.get('content', '')
+        
+        similarities.append((score, doc_id, url, title, content))
+    
+    return similarities
+
+async def search_similar(query: str, top_k: int = 3) -> List[Tuple]:
+    """Search for similar documents using either vector DB or SQLite"""
+    # Try to get from cache first
+    cache_key = f"search:{query}:{top_k}"
+    cached_results = await get_cached_query_result(cache_key)
+    if cached_results:
+        print("Using cached search results")
+        return cached_results
+    
+    # Not in cache, perform search
+    if USE_VECTOR_DB:
+        results = await search_similar_vectordb(query, top_k)
+    else:
+        results = await search_similar_sqlite(query, top_k)
+    
+    # Cache the results for 1 hour
+    await cache_query_result(cache_key, results, ttl=3600)
+    
+    return results
+
+async def ensure_document_in_vectordb(doc_id: int, url: str, title: str, content: str, embedding: List[float]) -> bool:
+    """Ensure a document is stored in the vector database"""
+    if not embedding:
+        return False
+        
+    # Prepare metadata
+    metadata = {
+        'url': url,
+        'title': title,
+        'content': content,
+        'source': 'db'
+    }
+    
+    # Add to vector store
+    doc_id_str = str(doc_id)
+    return vector_store.add_document(doc_id_str, embedding, metadata)
 
 def prepare_context(similar_docs: List[Tuple]) -> str:
     """Create context from similar documents for RAG"""
