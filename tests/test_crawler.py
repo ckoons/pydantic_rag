@@ -111,3 +111,47 @@ async def test_process_url_recursive(mock_openai_client, mock_requests_get, temp
         
         assert "Stored" in result
         assert url in result
+
+@pytest.mark.asyncio
+async def test_url_include_pattern_filtering(mock_requests_get):
+    """Test URL filtering with include patterns"""
+    url1 = "https://example.com/docs/api"
+    url2 = "https://example.com/blog/post"
+    
+    # Configure the mock to return proper content
+    mock_response = MagicMock()
+    mock_response.text = "<html><title>Test</title><body>Test content</body></html>"
+    mock_requests_get.return_value = mock_response
+    
+    # Test with include pattern that matches
+    with patch('crawler.get_embedding', return_value=AsyncMock(return_value=[0.1] * 1536)), \
+         patch('crawler.store_document', MagicMock()):
+        result = await process_url(url1, include_patterns=["docs"])
+        assert "Skipping" not in result
+    
+    # Test with include pattern that doesn't match
+    result = await process_url(url2, include_patterns=["docs"])
+    assert "Skipping" in result
+    assert "doesn't match include patterns" in result
+
+@pytest.mark.asyncio
+async def test_url_exclude_pattern_filtering(mock_requests_get):
+    """Test URL filtering with exclude patterns"""
+    url1 = "https://example.com/blog/posts"
+    url2 = "https://example.com/docs/guide"
+    
+    # Configure the mock to return proper content
+    mock_response = MagicMock()
+    mock_response.text = "<html><title>Test</title><body>Test content</body></html>"
+    mock_requests_get.return_value = mock_response
+    
+    # Test with exclude pattern that matches
+    result = await process_url(url1, exclude_patterns=["blog"])
+    assert "Skipping" in result
+    assert "matches exclude patterns" in result
+    
+    # Test with exclude pattern that doesn't match
+    with patch('crawler.get_embedding', return_value=AsyncMock(return_value=[0.1] * 1536)), \
+         patch('crawler.store_document', MagicMock()):
+        result = await process_url(url2, exclude_patterns=["blog"])
+        assert "Skipping" not in result

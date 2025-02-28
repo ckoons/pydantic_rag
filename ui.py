@@ -49,13 +49,56 @@ async def show_crawler_ui():
         # Update session state when slider changes
         st.session_state.crawl_timeout = timeout
     
+    # URL filtering options
+    st.subheader("URL Filtering")
+    st.write("Optionally filter which URLs are crawled using regex patterns")
+    
+    # Initialize session state for patterns
+    if "include_patterns" not in st.session_state:
+        st.session_state.include_patterns = ""
+    if "exclude_patterns" not in st.session_state:
+        st.session_state.exclude_patterns = ""
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        include_patterns = st.text_area("Include patterns (one per line)", 
+                                        value=st.session_state.include_patterns,
+                                        help="Only crawl URLs that match at least one of these regex patterns",
+                                        key="include_patterns_input")
+        st.session_state.include_patterns = include_patterns
+    with col2:
+        exclude_patterns = st.text_area("Exclude patterns (one per line)", 
+                                        value=st.session_state.exclude_patterns,
+                                        help="Skip URLs that match any of these regex patterns",
+                                        key="exclude_patterns_input")
+        st.session_state.exclude_patterns = exclude_patterns
+    
     if st.button("Crawl URL") and url_input:
+        # Process include and exclude patterns
+        include_list = None
+        if st.session_state.include_patterns.strip():
+            include_list = [p.strip() for p in st.session_state.include_patterns.split('\n') if p.strip()]
+            if include_list:
+                st.write(f"Including URLs matching: {', '.join(include_list)}")
+        
+        exclude_list = None
+        if st.session_state.exclude_patterns.strip():
+            exclude_list = [p.strip() for p in st.session_state.exclude_patterns.split('\n') if p.strip()]
+            if exclude_list:
+                st.write(f"Excluding URLs matching: {', '.join(exclude_list)}")
+        
         # Debug info
         st.write(f"Starting crawl with depth: {st.session_state.crawl_depth}, timeout: {st.session_state.crawl_timeout}")
         
         with st.status("Crawling...") as status:
-            result = await process_url(url_input, depth=st.session_state.crawl_depth, 
-                                      timeout=st.session_state.crawl_timeout, progress_bar=status)
+            result = await process_url(
+                url_input, 
+                depth=st.session_state.crawl_depth, 
+                timeout=st.session_state.crawl_timeout, 
+                progress_bar=status,
+                include_patterns=include_list,
+                exclude_patterns=exclude_list
+            )
             if "Error" in result:
                 st.error(result)
             else:

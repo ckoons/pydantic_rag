@@ -30,9 +30,24 @@ async def process_url(
     depth: int = 1, 
     timeout: int = 30, 
     progress_bar: Optional[Any] = None, 
-    processed_urls: Optional[Set[str]] = None
+    processed_urls: Optional[Set[str]] = None,
+    include_patterns: Optional[List[str]] = None,
+    exclude_patterns: Optional[List[str]] = None
 ) -> str:
-    """Process a single URL: fetch content, extract title, get embedding, store in db"""
+    """
+    Process a single URL: fetch content, extract title, get embedding, store in db
+    
+    Args:
+        url: The URL to process
+        depth: How many links deep to crawl (1 = just this page)
+        timeout: Request timeout in seconds
+        progress_bar: Optional Streamlit progress bar for UI feedback
+        processed_urls: Set of already processed URLs to avoid duplicates
+        include_patterns: List of regex patterns URLs must match to be processed
+        exclude_patterns: List of regex patterns URLs must NOT match to be processed
+    """
+    import re
+    
     if processed_urls is None:
         processed_urls = set()
     
@@ -40,6 +55,23 @@ async def process_url(
     if url in processed_urls:
         return f"Already processed: {url}"
     
+    # Apply URL filtering patterns
+    if include_patterns:
+        if not any(re.search(pattern, url, re.IGNORECASE) for pattern in include_patterns):
+            if progress_bar:
+                progress_bar.write(f"Skipping {url} - doesn't match include patterns")
+            else:
+                print(f"Skipping {url} - doesn't match include patterns")
+            return f"Skipping {url} - doesn't match include patterns"
+    
+    if exclude_patterns:
+        if any(re.search(pattern, url, re.IGNORECASE) for pattern in exclude_patterns):
+            if progress_bar:
+                progress_bar.write(f"Skipping {url} - matches exclude patterns")
+            else:
+                print(f"Skipping {url} - matches exclude patterns")
+            return f"Skipping {url} - matches exclude patterns"
+            
     # Add to processed set
     processed_urls.add(url)
     
@@ -100,8 +132,21 @@ async def process_url(
             # Extract links
             links = extract_links(soup, url)
             
-            # Process each link with reduced depth
-            for link in links[:5]:  # Limit to first 5 links to avoid excessive crawling
+            # Process each link with reduced depth (limit by default to first 5 links)
+            # Filter links based on patterns first
+            filtered_links = []
+            for link in links:
+                if include_patterns and not any(re.search(pattern, link, re.IGNORECASE) for pattern in include_patterns):
+                    if progress_bar:
+                        progress_bar.write(f"Filtering out {link} - doesn't match include patterns")
+                    continue
+                if exclude_patterns and any(re.search(pattern, link, re.IGNORECASE) for pattern in exclude_patterns):
+                    if progress_bar:
+                        progress_bar.write(f"Filtering out {link} - matches exclude patterns")
+                    continue
+                filtered_links.append(link)
+                
+            for link in filtered_links[:5]:  # Limit to first 5 links to avoid excessive crawling
                 if progress_bar:
                     progress_bar.write(f"Following link: {link} at depth {depth-1}")
                     
@@ -110,7 +155,9 @@ async def process_url(
                     depth=depth-1, 
                     timeout=timeout, 
                     progress_bar=None, 
-                    processed_urls=processed_urls
+                    processed_urls=processed_urls,
+                    include_patterns=include_patterns,
+                    exclude_patterns=exclude_patterns
                 )
         
         if progress_bar:

@@ -44,7 +44,27 @@ The application has two main tabs:
 1. Navigate to the "Crawler" tab
 2. Enter a URL to crawl (e.g., "https://ai.pydantic.dev/")
 3. Adjust crawl depth and timeout settings
-4. Click "Crawl URL"
+4. Optionally configure URL filtering:
+   - **Include patterns**: Only URLs matching at least one pattern will be crawled
+   - **Exclude patterns**: URLs matching any pattern will be skipped
+   - Patterns use Python regular expressions (e.g., `docs/.*` to match all docs)
+5. Click "Crawl URL"
+
+#### Example URL Filtering
+
+To only crawl documentation pages and exclude blog posts:
+
+**Include patterns:**
+```
+/docs/
+/reference/
+```
+
+**Exclude patterns:**
+```
+/blog/
+/news/
+```
 
 ### Asking Questions
 
