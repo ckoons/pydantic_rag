@@ -19,20 +19,20 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 2. Install required packages:
 ```bash
-pip install streamlit openai python-dotenv beautifulsoup4 requests numpy
+pip install -r requirements.txt
 ```
 
-3. Create a `.env` file with your API keys:
-```
-OPENAI_API_KEY=your-openai-key
-LLM_MODEL=gpt-4o-mini  # or another OpenAI model
+3. Create a `.env` file with your API keys (or copy from example):
+```bash
+cp .env.example .env
+# Then edit .env to add your actual OpenAI API key
 ```
 
 ## Usage
 
 Run the Streamlit application:
 ```bash
-streamlit run combined_crawler_ui.py
+streamlit run app.py
 ```
 
 The application has two main tabs:
@@ -51,6 +51,15 @@ The application has two main tabs:
 1. Navigate to the "Chat" tab
 2. Type your question in the input box
 3. View sources used to answer your question in the expandable section
+
+## Project Structure
+
+- `app.py` - Main application entry point
+- `db.py` - Database operations
+- `embeddings.py` - OpenAI embeddings and completions
+- `crawler.py` - Web crawling functionality
+- `search.py` - Vector similarity search
+- `ui.py` - Streamlit UI components
 
 ## How It Works
 
