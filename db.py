@@ -8,8 +8,15 @@ import sqlite3
 import numpy as np
 from typing import List, Tuple, Optional, Dict, Any
 
-# Setup database path - store in the project directory for persistence
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pydantic_docs_simple.db")
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Setup database path - use environment variable or default to project directory
+DB_PATH = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "pydantic_docs_simple.db"))
+
+# Create directory for database if it doesn't exist
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 def setup_database(reset=False) -> str:
     """Create a simple SQLite database for storing documentation"""

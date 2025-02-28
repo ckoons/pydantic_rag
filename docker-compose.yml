@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  pydantic_rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pydantic_rag
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_ENABLE_CORS=false
