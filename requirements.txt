@@ -1,9 +1,19 @@
 streamlit>=1.31.0
 openai>=1.11.0
+anthropic>=0.8.0
 python-dotenv>=1.0.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0
 numpy>=1.26.0
+pydantic>=2.5.0
+jinja2>=3.1.2
+markdown>=3.5.0
+markdownify>=0.11.6
+jsonschema>=4.20.0
+llama-index>=0.10.0
+transformers>=4.36.0
+sentence-transformers>=2.2.2
+torch>=2.0.0
 
 # Testing requirements
 pytest>=7.4.0

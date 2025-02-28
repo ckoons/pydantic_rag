@@ -32,7 +32,9 @@ async def process_url(
     progress_bar: Optional[Any] = None, 
     processed_urls: Optional[Set[str]] = None,
     include_patterns: Optional[List[str]] = None,
-    exclude_patterns: Optional[List[str]] = None
+    exclude_patterns: Optional[List[str]] = None,
+    embedding_provider: Optional[str] = None,
+    embedding_model: Optional[str] = None
 ) -> str:
     """
     Process a single URL: fetch content, extract title, get embedding, store in db
@@ -45,6 +47,8 @@ async def process_url(
         processed_urls: Set of already processed URLs to avoid duplicates
         include_patterns: List of regex patterns URLs must match to be processed
         exclude_patterns: List of regex patterns URLs must NOT match to be processed
+        embedding_provider: Optional provider name for embeddings (defaults to environment variable)
+        embedding_model: Optional model name for embeddings (defaults to environment variable)
     """
     import re
     
@@ -183,8 +187,27 @@ async def process_url(
     if progress_bar:
         progress_bar.progress(0.5, text="Getting embedding")
     
-    # Generate embedding
-    embedding = await get_embedding(content)
+    # Use provided embedding settings or get from environment
+    import os
+    from llm_providers import EmbeddingProvider
+    
+    provider = embedding_provider or os.getenv("EMBEDDING_PROVIDER", EmbeddingProvider.OPENAI.value)
+    model_name = embedding_model
+    
+    if not model_name:
+        # If using OpenAI embeddings
+        if provider == EmbeddingProvider.OPENAI.value:
+            model_name = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+        # If using sentence transformers
+        elif provider in [EmbeddingProvider.HUGGINGFACE.value, EmbeddingProvider.SENTENCE_TRANSFORMERS.value]:
+            model_name = os.getenv("HF_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    
+    # Log what we're using
+    if progress_bar:
+        progress_bar.write(f"Using embedding model: {provider}/{model_name}")
+    
+    # Generate embedding with provider settings
+    embedding = await get_embedding(content, provider=provider, model_name=model_name)
     
     if embedding:
         if progress_bar:
@@ -249,7 +272,9 @@ async def process_url(
                         progress_bar=None, 
                         processed_urls=processed_urls,
                         include_patterns=include_patterns,
-                        exclude_patterns=exclude_patterns
+                        exclude_patterns=exclude_patterns,
+                        embedding_provider=provider,
+                        embedding_model=model_name
                     )
                 except Exception as e:
                     if progress_bar:
