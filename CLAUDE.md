@@ -32,3 +32,20 @@
 - **search.py** - Vector similarity search
 - **ui.py** - Streamlit UI components
 - **tests/** - Test files (pytest)
+
+## Project Status
+- **Completed**:
+  - Refactored monolithic application into modular components
+  - Added comprehensive test suite with pytest
+  - Implemented URL filtering for the crawler (include/exclude patterns)
+  - Fixed UI issues with nested expanders
+  - Added proper error handling
+
+- **Enhancements Roadmap**:
+  1. ✅ Add filtering options to control which links are followed during crawling
+  2. Implement user authentication for the Streamlit interface 
+  3. Add support for PDF and other document formats
+  4. Integrate with Pydantic models for structured data extraction
+  5. Implement caching to reduce API calls and improve performance
+  6. Create a Docker container for easy deployment
+  7. Add support for other embedding models (e.g., local models via LlamaIndex)
