@@ -46,4 +46,25 @@ async def search_similar(query: str, top_k: int = 3) -> List[Tuple]:
 
 def prepare_context(similar_docs: List[Tuple]) -> str:
     """Create context from similar documents for RAG"""
-    return "\n\n".join([content for _, _, _, _, content in similar_docs])
+    # Clean up each document content
+    cleaned_contents = []
+    
+    for _, _, url, title, content in similar_docs:
+        # Include source information
+        doc_header = f"Source: {title or url}"
+        
+        # Clean up the content
+        import re
+        # Remove any remaining "Skip to content" or navigation artifacts
+        cleaned_content = re.sub(r'(?i)skip\s+to\s+content.*?\n', '', content)
+        # Remove excessive whitespace
+        cleaned_content = re.sub(r'\n{3,}', '\n\n', cleaned_content)
+        cleaned_content = re.sub(r'\s{2,}', ' ', cleaned_content)
+        # Remove any HTML tags that might have survived
+        cleaned_content = re.sub(r'<[^>]+>', '', cleaned_content)
+        
+        # Add to the context
+        cleaned_contents.append(f"{doc_header}\n\n{cleaned_content}")
+    
+    # Join all documents with clear separation
+    return "\n\n---\n\n".join(cleaned_contents)

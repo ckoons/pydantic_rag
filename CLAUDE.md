@@ -23,6 +23,7 @@
 - **File Length**: Keep files under 120 lines of code (comments excluded)
 - **Aesthetics**: Use consistent spacing and formatting for readability
 - **Tests**: Write comprehensive tests for all functionality
+- **Logs**: Write logs for debugging, should be multilevel logging controlled by command line or ENV variable
 
 ## Project Structure
 - **app.py** - Main application entry point

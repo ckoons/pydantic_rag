@@ -88,12 +88,23 @@ async def process_url(
         html = response.text
         if progress_bar:
             progress_bar.progress(0.3, text="Content fetched")
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         error_msg = f"Error fetching {url}: {e}"
         if progress_bar:
             progress_bar.error(error_msg)
         else:
             print(error_msg)
+        # Add to processed_urls to prevent retries in the same session
+        processed_urls.add(url)
+        return error_msg
+    except Exception as e:
+        error_msg = f"Unexpected error processing {url}: {e}"
+        if progress_bar:
+            progress_bar.error(error_msg)
+        else:
+            print(error_msg)
+        # Add to processed_urls to prevent retries in the same session
+        processed_urls.add(url)
         return error_msg
     
     # Parse with BeautifulSoup
@@ -104,8 +115,71 @@ async def process_url(
     # Extract title and content
     title = soup.title.string if soup.title else url
     
-    # Get main content
-    content = soup.get_text(separator="\n\n")
+    # Get main content and clean it up
+    # First, remove common navigation elements that cause noise
+    for element in soup.find_all(['nav', 'header', 'footer', 'style', 'script', 'noscript']):
+        element.decompose()
+    
+    # Remove common navigation and low-value elements
+    for selector in [
+        "div.sidebar", "aside", ".navigation", ".nav", ".menu", 
+        ".footer", ".header", ".banner", ".ad", ".cookie",
+        ".sidebar", ".widget", ".comment", ".social"
+    ]:
+        for element in soup.select(selector):
+            element.decompose()
+            
+    # Prioritize main content areas
+    main_content = None
+    for selector in ["main", "article", ".content", "#content", ".main", "#main", ".article", ".post"]:
+        content_area = soup.select_one(selector)
+        if content_area:
+            main_content = content_area
+            break
+    
+    # If main content was found, use only that; otherwise use the cleaned body
+    if main_content:
+        content_html = main_content
+    else:
+        content_html = soup.body if soup.body else soup
+        
+    # Remove "skip to content" links and other common UI elements
+    for element in content_html.find_all('a', string=lambda text: text and isinstance(text, str) and ('skip' in text.lower() and 'content' in text.lower())):
+        element.decompose()
+    
+    # Extract cleaned text with proper formatting
+    # Replace some HTML elements with formatted text
+    for heading in content_html.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+        # Add ## markers for headings based on level
+        level = int(heading.name[1])
+        heading_text = heading.get_text().strip()
+        heading.replace_with(soup.new_string(f"\n{'#' * level} {heading_text}\n"))
+        
+    # Format lists
+    for li in content_html.find_all('li'):
+        li_text = li.get_text().strip()
+        li.replace_with(soup.new_string(f"- {li_text}\n"))
+    
+    # Format code blocks
+    for code in content_html.find_all('pre'):
+        code_text = code.get_text()
+        code.replace_with(soup.new_string(f"\n```\n{code_text}\n```\n"))
+    
+    # Extract text with meaningful separators
+    content = content_html.get_text(separator="\n\n")
+    
+    # Clean up the content
+    import re
+    # Remove excessive whitespace and newlines
+    content = re.sub(r'\n{3,}', '\n\n', content)  # Replace 3+ newlines with 2
+    content = re.sub(r'\s{2,}', ' ', content)     # Replace 2+ spaces with 1
+    
+    # Make sure content isn't too short
+    if len(content.strip()) < 100 and soup.body:
+        # If we got too little content, fall back to the whole body
+        content = soup.body.get_text(separator="\n\n")
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        content = re.sub(r'\s{2,}', ' ', content)
     if progress_bar:
         progress_bar.progress(0.5, text="Getting embedding")
     
@@ -136,6 +210,11 @@ async def process_url(
             # Filter links based on patterns first
             filtered_links = []
             for link in links:
+                # Skip links we've already processed
+                if link in processed_urls:
+                    continue
+                    
+                # Apply filters
                 if include_patterns and not any(re.search(pattern, link, re.IGNORECASE) for pattern in include_patterns):
                     if progress_bar:
                         progress_bar.write(f"Filtering out {link} - doesn't match include patterns")
@@ -144,21 +223,39 @@ async def process_url(
                     if progress_bar:
                         progress_bar.write(f"Filtering out {link} - matches exclude patterns")
                     continue
-                filtered_links.append(link)
                 
-            for link in filtered_links[:5]:  # Limit to first 5 links to avoid excessive crawling
+                # Limit crawl to reasonable URLs (avoid huge files/PDFs/etc)
+                if link.lower().endswith(('.pdf', '.zip', '.rar', '.tar.gz', '.jpg', '.jpeg', '.png', '.gif')):
+                    if progress_bar:
+                        progress_bar.write(f"Skipping non-HTML file: {link}")
+                    continue
+                    
+                filtered_links.append(link)
+            
+            # Limit to first 5 links to avoid excessive crawling
+            limited_links = filtered_links[:5]
+            if len(filtered_links) > 5 and progress_bar:
+                progress_bar.write(f"Limiting to 5 links out of {len(filtered_links)} found")
+                
+            for link in limited_links:
                 if progress_bar:
                     progress_bar.write(f"Following link: {link} at depth {depth-1}")
-                    
-                await process_url(
-                    link, 
-                    depth=depth-1, 
-                    timeout=timeout, 
-                    progress_bar=None, 
-                    processed_urls=processed_urls,
-                    include_patterns=include_patterns,
-                    exclude_patterns=exclude_patterns
-                )
+                
+                try:
+                    await process_url(
+                        link, 
+                        depth=depth-1, 
+                        timeout=timeout, 
+                        progress_bar=None, 
+                        processed_urls=processed_urls,
+                        include_patterns=include_patterns,
+                        exclude_patterns=exclude_patterns
+                    )
+                except Exception as e:
+                    if progress_bar:
+                        progress_bar.error(f"Error processing link {link}: {str(e)}")
+                    else:
+                        print(f"Error processing link {link}: {str(e)}")
         
         if progress_bar:
             progress_bar.progress(1.0, text="Complete!")

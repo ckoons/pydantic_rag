@@ -8,14 +8,18 @@ import sqlite3
 import numpy as np
 from typing import List, Tuple, Optional, Dict, Any
 
-# Setup database path
+# Setup database path - store in the project directory for persistence
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pydantic_docs_simple.db")
 
-def setup_database() -> str:
+def setup_database(reset=False) -> str:
     """Create a simple SQLite database for storing documentation"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
+    # Option to reset the database completely
+    if reset:
+        cursor.execute("DROP TABLE IF EXISTS docs")
+        
     # Create docs table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS docs (
@@ -23,13 +27,18 @@ def setup_database() -> str:
         url TEXT NOT NULL,
         title TEXT,
         content TEXT NOT NULL,
-        embedding BLOB
+        embedding BLOB,
+        crawl_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
     
     conn.commit()
     conn.close()
     return f"Database setup completed at {DB_PATH}"
+    
+def reset_database() -> str:
+    """Reset the database by dropping and recreating the tables"""
+    return setup_database(reset=True)
 
 def store_document(
     url: str, 
@@ -37,17 +46,32 @@ def store_document(
     content: str, 
     embedding: List[float]
 ) -> None:
-    """Store a document in the database with its embedding"""
+    """Store a document in the database with its embedding. 
+    Updates existing documents with the same URL."""
     # Convert embedding to bytes for storage
     embedding_bytes = np.array(embedding, dtype=np.float32).tobytes()
     
-    # Store in database
+    # Connect to database
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO docs (url, title, content, embedding) VALUES (?, ?, ?, ?)",
-        (url, title, content, embedding_bytes)
-    )
+    
+    # Check if this URL already exists
+    cursor.execute("SELECT id FROM docs WHERE url = ?", (url,))
+    existing_doc = cursor.fetchone()
+    
+    if existing_doc:
+        # Update existing document
+        cursor.execute(
+            "UPDATE docs SET title = ?, content = ?, embedding = ? WHERE url = ?",
+            (title, content, embedding_bytes, url)
+        )
+    else:
+        # Insert new document
+        cursor.execute(
+            "INSERT INTO docs (url, title, content, embedding) VALUES (?, ?, ?, ?)",
+            (url, title, content, embedding_bytes)
+        )
+    
     conn.commit()
     conn.close()
 

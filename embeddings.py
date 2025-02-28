@@ -17,12 +17,31 @@ openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 async def get_embedding(text: str) -> Optional[List[float]]:
     """Get embedding from OpenAI"""
+    # Clean and prepare text for embeddings
+    if not text or len(text.strip()) < 50:
+        print(f"Warning: Text is too short ({len(text.strip()) if text else 0} chars)")
+        # If text is too short, it's not useful for embeddings
+        if len(text.strip()) < 20:
+            print("Text too short for embedding, returning None")
+            return None
+    
     try:
+        # Trim to avoid token limits but keep as much content as possible
+        # The embedding model can handle ~8K tokens
+        trimmed_text = text[:32000] if len(text) > 32000 else text
+        
         response = await openai_client.embeddings.create(
             model="text-embedding-3-small",
-            input=text[:8000]  # Limit text length to avoid token limits
+            input=trimmed_text
         )
-        return response.data[0].embedding
+        
+        # Check if we got a valid embedding
+        embedding = response.data[0].embedding
+        if not embedding or len(embedding) < 100:
+            print(f"Warning: Received invalid embedding of length {len(embedding) if embedding else 0}")
+            return None
+            
+        return embedding
     except Exception as e:
         print(f"Error getting embedding: {e}")
         return None
@@ -39,9 +58,9 @@ async def get_answer(query: str, context: str) -> str:
         
         # Create a more detailed system prompt
         system_prompt = """
-        You are an AI assistant specialized in Pydantic AI documentation. 
+        You are an AI assistant specialized in documentation about PydanticAI, Anthropic, and other topics in the knowledgebase. 
         Answer questions based ONLY on the provided context. 
-        If the context doesn't contain relevant information, say "I don't have information about that in my knowledge base."
+        If the context doesn't contain relevant information, say "I don't have information about that in my knowledge base. Try crawling additional documentation pages first."
         Be concise but thorough in your answers.
         """
         

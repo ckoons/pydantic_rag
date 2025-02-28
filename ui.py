@@ -6,7 +6,7 @@ Handles user interaction and display components.
 import streamlit as st
 from typing import List, Dict
 
-from db import get_all_documents
+from db import get_all_documents, reset_database
 from crawler import process_url
 from search import search_similar, prepare_context
 from embeddings import get_answer
@@ -73,42 +73,338 @@ async def show_crawler_ui():
                                         key="exclude_patterns_input")
         st.session_state.exclude_patterns = exclude_patterns
     
-    if st.button("Crawl URL") and url_input:
-        # Process include and exclude patterns
-        include_list = None
-        if st.session_state.include_patterns.strip():
-            include_list = [p.strip() for p in st.session_state.include_patterns.split('\n') if p.strip()]
+    # Set up columns for buttons
+    col1, col2 = st.columns(2)
+    
+    # Process include and exclude patterns (needed for both buttons)
+    include_list = None
+    if st.session_state.include_patterns.strip():
+        include_list = [p.strip() for p in st.session_state.include_patterns.split('\n') if p.strip()]
+    
+    exclude_list = None
+    if st.session_state.exclude_patterns.strip():
+        exclude_list = [p.strip() for p in st.session_state.exclude_patterns.split('\n') if p.strip()]
+    
+    # Crawl new URL button
+    with col1:
+        if st.button("Crawl URL") and url_input:
             if include_list:
                 st.write(f"Including URLs matching: {', '.join(include_list)}")
-        
-        exclude_list = None
-        if st.session_state.exclude_patterns.strip():
-            exclude_list = [p.strip() for p in st.session_state.exclude_patterns.split('\n') if p.strip()]
+            
             if exclude_list:
                 st.write(f"Excluding URLs matching: {', '.join(exclude_list)}")
-        
-        # Debug info
-        st.write(f"Starting crawl with depth: {st.session_state.crawl_depth}, timeout: {st.session_state.crawl_timeout}")
-        
-        with st.status("Crawling...") as status:
-            result = await process_url(
-                url_input, 
-                depth=st.session_state.crawl_depth, 
-                timeout=st.session_state.crawl_timeout, 
-                progress_bar=status,
-                include_patterns=include_list,
-                exclude_patterns=exclude_list
-            )
-            if "Error" in result:
-                st.error(result)
+            
+            # Debug info
+            st.write(f"Starting crawl with depth: {st.session_state.crawl_depth}, timeout: {st.session_state.crawl_timeout}")
+            
+            with st.status("Crawling...") as status:
+                result = await process_url(
+                    url_input, 
+                    depth=st.session_state.crawl_depth, 
+                    timeout=st.session_state.crawl_timeout, 
+                    progress_bar=status,
+                    include_patterns=include_list,
+                    exclude_patterns=exclude_list
+                )
+                if "Error" in result:
+                    st.error(result)
+                else:
+                    st.success(result)
+    
+    # Recrawl existing URLs button
+    with col2:
+        if st.button("Recrawl Existing URLs"):
+            # Get all documents from the database
+            docs = get_all_documents()
+            
+            if not docs:
+                st.warning("No URLs found in the database to recrawl.")
             else:
-                st.success(result)
+                # Filter out test entries
+                valid_docs = [doc for doc in docs if not (doc.get('title') and "Test Page" in doc.get('title'))]
+                
+                # Create a checkbox to select URLs to recrawl
+                st.write(f"Found {len(valid_docs)} URLs in the database.")
+                
+                # Using a container for the recrawl status
+                recrawl_container = st.container()
+                
+                with recrawl_container:
+                    with st.status(f"Ready to recrawl {len(valid_docs)} URLs...") as status:
+                        status.update(label=f"Select URLs to recrawl from the {len(valid_docs)} URLs found", state="running")
+                        
+                        # Create a dictionary to store the selection state
+                        if "selected_urls" not in st.session_state:
+                            st.session_state.selected_urls = {doc['url']: True for doc in valid_docs}
+                        
+                        # Select all / Deselect all buttons
+                        select_col1, select_col2 = st.columns(2)
+                        with select_col1:
+                            if st.button("Select All"):
+                                for url in st.session_state.selected_urls:
+                                    st.session_state.selected_urls[url] = True
+                        with select_col2:
+                            if st.button("Deselect All"):
+                                for url in st.session_state.selected_urls:
+                                    st.session_state.selected_urls[url] = False
+                        
+                        # Display checkboxes for each URL
+                        for doc in valid_docs:
+                            url = doc['url']
+                            if url not in st.session_state.selected_urls:
+                                st.session_state.selected_urls[url] = True
+                            st.session_state.selected_urls[url] = st.checkbox(
+                                f"{doc.get('title') or url}", 
+                                value=st.session_state.selected_urls[url],
+                                key=f"url_{url}"
+                            )
+                        
+                        # Get selected URLs
+                        selected_urls = [url for url, selected in st.session_state.selected_urls.items() if selected]
+                        
+                        if st.button(f"Recrawl {len(selected_urls)} Selected URLs"):
+                            if not selected_urls:
+                                st.warning("No URLs selected for recrawling.")
+                            else:
+                                status.update(label=f"Recrawling {len(selected_urls)} URLs...", state="running")
+                                
+                                success_count = 0
+                                error_count = 0
+                                
+                                for i, url in enumerate(selected_urls):
+                                    try:
+                                        status.write(f"Processing {i+1}/{len(selected_urls)}: {url}")
+                                        
+                                        result = await process_url(
+                                            url, 
+                                            depth=st.session_state.crawl_depth, 
+                                            timeout=st.session_state.crawl_timeout, 
+                                            progress_bar=None,  # Using the outer status instead
+                                            include_patterns=include_list,
+                                            exclude_patterns=exclude_list
+                                        )
+                                        
+                                        if "Error" in result:
+                                            error_count += 1
+                                            status.error(f"Error recrawling {url}: {result}")
+                                        else:
+                                            success_count += 1
+                                    except Exception as e:
+                                        error_count += 1
+                                        status.error(f"Exception while processing {url}: {str(e)}")
+                                
+                                status.update(
+                                    label=f"Recrawl completed! {success_count} successes, {error_count} errors", 
+                                    state="complete", 
+                                    expanded=True
+                                )
+                                
+                                if success_count > 0:
+                                    st.success(f"Successfully recrawled {success_count} URLs")
+                                if error_count > 0:
+                                    st.warning(f"Failed to recrawl {error_count} URLs")
+                            
+    # Database management section
+    st.subheader("Database Management")
+    
+    # Reset database button
+    if st.button("Reset Database"):
+        if st.session_state.get("confirm_reset") != True:
+            st.session_state.confirm_reset = True
+            st.warning("⚠️ This will delete ALL crawled documents! Click again to confirm.")
+        else:
+            with st.status("Resetting database...") as status:
+                result = reset_database()
+                status.update(label=result, state="complete")
+                st.session_state.confirm_reset = False
+                st.success("Database has been reset. All crawled documents have been removed.")
+                
+    # Section for crawling common documentation
+    st.subheader("Crawl Common Documentation")
+    
+    doc_col1, doc_col2 = st.columns(2)
+    with doc_col1:
+        if st.button("Crawl Pydantic Documentation"):
+            st.write("Crawling Pydantic documentation...")
+            with st.status("Crawling Pydantic docs...") as status:
+                # URLs to crawl for Pydantic
+                pydantic_urls = [
+                    "https://docs.pydantic.dev/latest/",
+                    "https://docs.pydantic.dev/latest/concepts/models/",
+                    "https://docs.pydantic.dev/latest/concepts/validators/",
+                    "https://docs.pydantic.dev/latest/concepts/fields/",
+                ]
+                
+                success_count = 0
+                error_count = 0
+                
+                for i, url in enumerate(pydantic_urls):
+                    try:
+                        status.write(f"Processing {i+1}/{len(pydantic_urls)}: {url}")
+                        
+                        result = await process_url(
+                            url, 
+                            depth=2,  # Crawl one level deep for comprehensive docs
+                            timeout=60,  # Longer timeout for these key pages
+                            progress_bar=None,
+                            include_patterns=["docs.pydantic.dev"],  # Only crawl pydantic docs
+                            exclude_patterns=None
+                        )
+                        
+                        if "Error" in result:
+                            error_count += 1
+                            status.error(f"Error crawling {url}: {result}")
+                        else:
+                            success_count += 1
+                    except Exception as e:
+                        error_count += 1
+                        status.error(f"Exception processing {url}: {str(e)}")
+                
+                status.update(
+                    label=f"Pydantic docs crawl completed! {success_count} successes, {error_count} errors", 
+                    state="complete", 
+                    expanded=True
+                )
+    
+    with doc_col2:
+        if st.button("Crawl FastAPI Documentation"):
+            st.write("Crawling FastAPI documentation...")
+            with st.status("Crawling FastAPI docs...") as status:
+                # URLs to crawl for FastAPI
+                fastapi_urls = [
+                    "https://fastapi.tiangolo.com/",
+                    "https://fastapi.tiangolo.com/tutorial/",
+                    "https://fastapi.tiangolo.com/advanced/",
+                ]
+                
+                success_count = 0
+                error_count = 0
+                
+                for i, url in enumerate(fastapi_urls):
+                    try:
+                        status.write(f"Processing {i+1}/{len(fastapi_urls)}: {url}")
+                        
+                        result = await process_url(
+                            url, 
+                            depth=2,  # Crawl one level deep
+                            timeout=60,  # Longer timeout
+                            progress_bar=None,
+                            include_patterns=["fastapi.tiangolo.com"],  # Only crawl FastAPI docs
+                            exclude_patterns=None
+                        )
+                        
+                        if "Error" in result:
+                            error_count += 1
+                            status.error(f"Error crawling {url}: {result}")
+                        else:
+                            success_count += 1
+                    except Exception as e:
+                        error_count += 1
+                        status.error(f"Exception processing {url}: {str(e)}")
+                
+                status.update(
+                    label=f"FastAPI docs crawl completed! {success_count} successes, {error_count} errors", 
+                    state="complete", 
+                    expanded=True
+                )
+            # Get all documents from the database
+            docs = get_all_documents()
+            
+            if not docs:
+                st.warning("No URLs found in the database to recrawl.")
+            else:
+                # Filter out test entries
+                valid_docs = [doc for doc in docs if not (doc.get('title') and "Test Page" in doc.get('title'))]
+                
+                # Create a checkbox to select URLs to recrawl
+                st.write(f"Found {len(valid_docs)} URLs in the database.")
+                
+                # Using a container for the recrawl status
+                recrawl_container = st.container()
+                
+                with recrawl_container:
+                    with st.status(f"Ready to recrawl {len(valid_docs)} URLs...") as status:
+                        status.update(label=f"Select URLs to recrawl from the {len(valid_docs)} URLs found", state="running")
+                        
+                        # Create a dictionary to store the selection state
+                        if "selected_urls" not in st.session_state:
+                            st.session_state.selected_urls = {doc['url']: True for doc in valid_docs}
+                        
+                        # Select all / Deselect all buttons
+                        select_col1, select_col2 = st.columns(2)
+                        with select_col1:
+                            if st.button("Select All"):
+                                for url in st.session_state.selected_urls:
+                                    st.session_state.selected_urls[url] = True
+                        with select_col2:
+                            if st.button("Deselect All"):
+                                for url in st.session_state.selected_urls:
+                                    st.session_state.selected_urls[url] = False
+                        
+                        # Display checkboxes for each URL
+                        for doc in valid_docs:
+                            url = doc['url']
+                            if url not in st.session_state.selected_urls:
+                                st.session_state.selected_urls[url] = True
+                            st.session_state.selected_urls[url] = st.checkbox(
+                                f"{doc.get('title') or url}", 
+                                value=st.session_state.selected_urls[url],
+                                key=f"url_{url}"
+                            )
+                        
+                        # Get selected URLs
+                        selected_urls = [url for url, selected in st.session_state.selected_urls.items() if selected]
+                        
+                        if st.button(f"Recrawl {len(selected_urls)} Selected URLs"):
+                            if not selected_urls:
+                                st.warning("No URLs selected for recrawling.")
+                            else:
+                                status.update(label=f"Recrawling {len(selected_urls)} URLs...", state="running")
+                                
+                                success_count = 0
+                                error_count = 0
+                                
+                                for i, url in enumerate(selected_urls):
+                                    try:
+                                        status.write(f"Processing {i+1}/{len(selected_urls)}: {url}")
+                                        
+                                        result = await process_url(
+                                            url, 
+                                            depth=st.session_state.crawl_depth, 
+                                            timeout=st.session_state.crawl_timeout, 
+                                            progress_bar=None,  # Using the outer status instead
+                                            include_patterns=include_list,
+                                            exclude_patterns=exclude_list
+                                        )
+                                        
+                                        if "Error" in result:
+                                            error_count += 1
+                                            status.error(f"Error recrawling {url}: {result}")
+                                        else:
+                                            success_count += 1
+                                    except Exception as e:
+                                        error_count += 1
+                                        status.error(f"Exception while processing {url}: {str(e)}")
+                                
+                                status.update(
+                                    label=f"Recrawl completed! {success_count} successes, {error_count} errors", 
+                                    state="complete", 
+                                    expanded=True
+                                )
+                                
+                                if success_count > 0:
+                                    st.success(f"Successfully recrawled {success_count} URLs")
+                                if error_count > 0:
+                                    st.warning(f"Failed to recrawl {error_count} URLs")
     
     # Show crawled documents
     st.subheader("Crawled Documents")
     docs = show_crawled_docs()
     if docs:
         for doc in docs:
+            # Skip entries with "Test" in the title (to remove test data)
+            if not doc['title'] or "Test Page" in doc['title']:
+                continue
             st.write(f"- [{doc['title']}]({doc['url']})")
 
 async def show_chat_ui():
@@ -143,12 +439,25 @@ async def show_chat_ui():
                 
                 # Prepare context from similar documents
                 if similar_docs:
-                    # Show sources in an expander
+                    # Show sources in an expander with more detail
                     with st.expander("View sources"):
+                        st.write("These are the sources used to answer your question:")
                         for i, (similarity, doc_id, url, title, content) in enumerate(similar_docs):
                             st.markdown(f"**Source {i+1}**: [{title or url}]({url})")
                             st.markdown(f"Similarity: {similarity:.2f}")
-                            st.markdown(f"**Content preview**: {content[:500]}...")
+                            
+                            # Show a cleaner content preview with more detail
+                            import re
+                            preview_content = re.sub(r'\s+', ' ', content).strip()
+                            preview_content = re.sub(r'<[^>]+>', '', preview_content)
+                            
+                            if len(preview_content) > 50:
+                                st.markdown(f"**Content preview**: {preview_content[:1000]}...")
+                            else:
+                                st.markdown("**Note**: This source appears to have limited textual content.")
+                                
+                            # Display a link to directly view the source
+                            st.markdown(f"[Visit this page]({url})")
                     
                     # Create context from similar documents
                     context = prepare_context(similar_docs)
@@ -157,14 +466,21 @@ async def show_chat_ui():
                     with st.spinner("Generating answer from context..."):
                         answer = await get_answer(query, context)
                         
-                    # Show debug information
-                    st.write(f"Response length: {len(answer)} characters")
+                    # Clean up any remaining HTML or navigation artifacts in the answer
+                    import re
+                    # Remove any HTML tags
+                    clean_answer = re.sub(r'<[^>]+>', '', answer)
+                    # Clean up any remaining "Skip to content" artifacts
+                    clean_answer = re.sub(r'(?i)skip\s+to\s+content.*?\n', '', clean_answer)
+                    # Clean up excessive spacing
+                    clean_answer = re.sub(r'\n{3,}', '\n\n', clean_answer)
+                    clean_answer = re.sub(r'\s{2,}', ' ', clean_answer)
                     
                     # Display the answer
-                    st.markdown(answer)
+                    st.markdown(clean_answer)
                     
                     # Add assistant message to chat
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
+                    st.session_state.messages.append({"role": "assistant", "content": clean_answer})
                 else:
                     no_docs_msg = "I don't have enough information to answer that. Try crawling more documentation first."
                     st.markdown(no_docs_msg)
